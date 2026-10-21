@@ -216,6 +216,10 @@ h2 {
   user-select: none;
   transition: transform .18s ease,box-shadow .18s ease,background .18s ease;
   animation: popIn .28s ease both;
+
+  /* Поддержка перетаскивания пальцем */
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .card::after {
@@ -236,19 +240,16 @@ h2 {
 .card:active { cursor: grabbing; transform: scale(.98); }
 .card.dragging { opacity: .35; }
 
-/* Перетаскивание на телефонах и планшетах */
-.card {
-  touch-action: none;
-  -webkit-tap-highlight-color: transparent;
-}
 .card.touch-dragging {
   position: fixed;
-  z-index: 1000;
+  z-index: 10000;
   pointer-events: none;
   opacity: .92;
   transform: scale(1.04);
   box-shadow: 0 12px 28px rgba(190,90,143,.22);
+  transition: none;
 }
+
 .board.touch-drop-target, .pool.touch-drop-target {
   border-color: #e86eae;
   box-shadow: 0 0 0 4px rgba(232,110,174,.16);
@@ -361,7 +362,7 @@ body.alt-vibe .counter {
   border-color: #d9c7f5;
 }
 
-/* мини-игра */
+/* Мини-игра */
 
 .mini-game {
   position: relative;
@@ -588,7 +589,6 @@ body.alt-vibe .counter {
     <button type="button" class="reset" id="resetButton">↺ сбросить</button>
   </div>
 
-  <!-- мини-игра внизу страницы -->
   <section class="mini-game">
     <div class="game-top">
       <div>
@@ -751,21 +751,23 @@ function createCard(username) {
     card.classList.remove("dragging");
   });
 
-  // Перетаскивание пальцем на телефонах и планшетах (iOS / Android)
+  // Перетаскивание пальцем на телефонах и планшетах
   let touchIdentifier = null;
   let touchStartX = 0;
   let touchStartY = 0;
-  let touchOffsetX = 0;
-  let touchOffsetY = 0;
   let touchDragging = false;
-  let originalRect = null;
+  let touchGhost = null;
+  let offsetX = 0;
+  let offsetY = 0;
 
   const clearTouchDragStyles = () => {
-    card.classList.remove("touch-dragging");
-    ["position", "z-index", "pointer-events", "opacity", "transform",
-     "box-shadow", "width", "left", "top", "margin"].forEach(property => {
-      card.style.removeProperty(property);
-    });
+    if (touchGhost) {
+      touchGhost.remove();
+      touchGhost = null;
+    }
+
+    card.style.removeProperty("opacity");
+
     document.querySelectorAll(".touch-drop-target").forEach(item => {
       item.classList.remove("touch-drop-target");
     });
@@ -773,24 +775,37 @@ function createCard(username) {
 
   card.addEventListener("touchstart", event => {
     if (!event.changedTouches || event.changedTouches.length === 0) return;
+
     const touch = event.changedTouches[0];
+    const rect = card.getBoundingClientRect();
+
     touchIdentifier = touch.identifier;
     touchStartX = touch.clientX;
     touchStartY = touch.clientY;
-    originalRect = card.getBoundingClientRect();
-    touchOffsetX = touch.clientX - originalRect.left;
-    touchOffsetY = touch.clientY - originalRect.top;
+
+    // Запоминаем точку касания внутри карточки,
+    // чтобы она оставалась под пальцем во время движения.
+    offsetX = touch.clientX - rect.left;
+    offsetY = touch.clientY - rect.top;
+
     touchDragging = false;
-    // Не даём браузеру запускать собственное перетаскивание карточки.
     event.preventDefault();
   }, { passive: false });
 
   document.addEventListener("touchmove", event => {
     if (touchIdentifier === null) return;
-    const touch = Array.from(event.changedTouches).find(item => item.identifier === touchIdentifier);
+
+    const touch = Array.from(event.changedTouches).find(
+      item => item.identifier === touchIdentifier
+    );
+
     if (!touch) return;
 
-    const distance = Math.hypot(touch.clientX - touchStartX, touch.clientY - touchStartY);
+    const distance = Math.hypot(
+      touch.clientX - touchStartX,
+      touch.clientY - touchStartY
+    );
+
     if (!touchDragging && distance < 8) {
       event.preventDefault();
       return;
@@ -798,45 +813,83 @@ function createCard(username) {
 
     if (!touchDragging) {
       touchDragging = true;
-      card.classList.add("touch-dragging");
-      card.style.width = originalRect.width + "px";
-      card.style.left = (touch.clientX - touchOffsetX) + "px";
-      card.style.top = (touch.clientY - touchOffsetY) + "px";
-      card.style.margin = "0";
-    } else {
-      card.style.left = (touch.clientX - touchOffsetX) + "px";
-      card.style.top = (touch.clientY - touchOffsetY) + "px";
+
+      const rect = card.getBoundingClientRect();
+
+      touchGhost = card.cloneNode(true);
+      touchGhost.classList.add("touch-dragging");
+      touchGhost.classList.remove("dragging");
+
+      touchGhost.style.position = "fixed";
+      touchGhost.style.zIndex = "10000";
+      touchGhost.style.pointerEvents = "none";
+      touchGhost.style.width = rect.width + "px";
+      touchGhost.style.height = rect.height + "px";
+      touchGhost.style.margin = "0";
+      touchGhost.style.left = (touch.clientX - offsetX) + "px";
+      touchGhost.style.top = (touch.clientY - offsetY) + "px";
+
+      document.body.appendChild(touchGhost);
+      card.style.opacity = ".3";
+    } else if (touchGhost) {
+      // Карточка движется так, чтобы место касания
+      // оставалось прямо под пальцем.
+      touchGhost.style.left = (touch.clientX - offsetX) + "px";
+      touchGhost.style.top = (touch.clientY - offsetY) + "px";
     }
 
-    const underFinger = document.elementFromPoint(touch.clientX, touch.clientY);
+    const underFinger = document.elementFromPoint(
+      touch.clientX,
+      touch.clientY
+    );
+
     const zone = underFinger && underFinger.closest(".board, .pool");
+
     document.querySelectorAll(".touch-drop-target").forEach(item => {
       if (item !== zone) item.classList.remove("touch-drop-target");
     });
+
     if (zone) zone.classList.add("touch-drop-target");
+
     event.preventDefault();
   }, { passive: false });
 
   const finishTouchDrag = event => {
     if (touchIdentifier === null) return;
-    const touch = Array.from(event.changedTouches || []).find(item => item.identifier === touchIdentifier);
+
+    const touch = Array.from(event.changedTouches || []).find(
+      item => item.identifier === touchIdentifier
+    );
+
     if (!touch) return;
 
     let target = null;
+
     if (touchDragging) {
-      const underFinger = document.elementFromPoint(touch.clientX, touch.clientY);
+      const underFinger = document.elementFromPoint(
+        touch.clientX,
+        touch.clientY
+      );
+
       target = underFinger && underFinger.closest(".board, .pool");
     }
 
     const wasDragging = touchDragging;
+
     touchIdentifier = null;
     touchDragging = false;
+
     clearTouchDragStyles();
 
     if (wasDragging && target) {
       let destination = "pool";
-      if (target.classList.contains("honor")) destination = "honor";
-      else if (target.classList.contains("shame")) destination = "shame";
+
+      if (target.classList.contains("honor")) {
+        destination = "honor";
+      } else if (target.classList.contains("shame")) {
+        destination = "shame";
+      }
+
       moveUser(username, destination);
     }
   };
@@ -865,6 +918,7 @@ function render() {
   shame.replaceChildren();
 
   const query = search.value.toLowerCase().trim();
+
   const filteredPool = state.pool.filter(username =>
     username.toLowerCase().includes(query)
   );
@@ -885,6 +939,7 @@ function moveUser(username, target) {
   state.shame = state.shame.filter(user => user !== username);
 
   state[target].push(username);
+
   saveLocal();
   render();
 }
@@ -910,8 +965,12 @@ document.querySelectorAll(".board, .pool").forEach(zone => {
     if (!username) return;
 
     let target = "pool";
-    if (zone.classList.contains("honor")) target = "honor";
-    else if (zone.classList.contains("shame")) target = "shame";
+
+    if (zone.classList.contains("honor")) {
+      target = "honor";
+    } else if (zone.classList.contains("shame")) {
+      target = "shame";
+    }
 
     moveUser(username, target);
   });
@@ -924,6 +983,7 @@ document.getElementById("saveButton").addEventListener("click", () => {
 
   const button = document.getElementById("saveButton");
   const originalText = button.textContent;
+
   button.textContent = "♡ сохранено!";
 
   setTimeout(() => {
@@ -953,7 +1013,9 @@ document.getElementById("resetButton").addEventListener("click", () => {
 
 document.getElementById("vibeButton").addEventListener("click", event => {
   const active = document.body.classList.toggle("alt-vibe");
+
   event.currentTarget.setAttribute("aria-pressed", String(active));
+
   event.currentTarget.textContent = active
     ? " (ﾉ>ω<)ﾉ ｡･’★,｡･:*:･ﾟ’☆ "
     : "☆ ～('▽^人) ";
@@ -970,6 +1032,7 @@ document.getElementById("sparkleButton").addEventListener("click", () => {
 
   for (let i = 0; i < 24; i++) {
     const sparkle = document.createElement("span");
+
     sparkle.className = "sparkle-bit";
     sparkle.textContent = symbols[Math.floor(Math.random() * symbols.length)];
     sparkle.style.left = `${Math.random() * 100}vw`;
@@ -977,12 +1040,14 @@ document.getElementById("sparkleButton").addEventListener("click", () => {
     sparkle.style.setProperty("--dx", `${(Math.random() - .5) * 180}px`);
     sparkle.style.setProperty("--dy", `${-60 - Math.random() * 180}px`);
     sparkle.style.animationDelay = `${Math.random() * .25}s`;
+
     document.body.appendChild(sparkle);
+
     sparkle.addEventListener("animationend", () => sparkle.remove());
   }
 });
 
-/* логика мини-игры */
+/* Логика мини-игры */
 
 const gameField = document.getElementById("gameField");
 const heartTarget = document.getElementById("heartTarget");
