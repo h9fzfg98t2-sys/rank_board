@@ -751,106 +751,98 @@ function createCard(username) {
     card.classList.remove("dragging");
   });
 
-  // Перетаскивание пальцем на телефоне
-  let pointerStartX = 0;
-  let pointerStartY = 0;
-  let draggingWithTouch = false;
-  let offsetX = 0;
-  let offsetY = 0;
+  // Перетаскивание пальцем на телефонах и планшетах (iOS / Android)
+  let touchIdentifier = null;
+  let touchStartX = 0;
+  let touchStartY = 0;
+  let touchOffsetX = 0;
+  let touchOffsetY = 0;
+  let touchDragging = false;
+  let originalRect = null;
 
-  card.addEventListener("click", event => {
-    // Перемещение по нажатию остаётся доступным как запасной вариант:
-    // быстрое касание выбирает следующую доску по кругу.
-    if (event.detail === 0) {
-      const current = state.honor.includes(username) ? "honor"
-        : state.shame.includes(username) ? "shame" : "pool";
-      const next = current === "pool" ? "honor"
-        : current === "honor" ? "shame" : "pool";
-      moveUser(username, next);
+  const clearTouchDragStyles = () => {
+    card.classList.remove("touch-dragging");
+    ["position", "z-index", "pointer-events", "opacity", "transform",
+     "box-shadow", "width", "left", "top", "margin"].forEach(property => {
+      card.style.removeProperty(property);
+    });
+    document.querySelectorAll(".touch-drop-target").forEach(item => {
+      item.classList.remove("touch-drop-target");
+    });
+  };
+
+  card.addEventListener("touchstart", event => {
+    if (!event.changedTouches || event.changedTouches.length === 0) return;
+    const touch = event.changedTouches[0];
+    touchIdentifier = touch.identifier;
+    touchStartX = touch.clientX;
+    touchStartY = touch.clientY;
+    originalRect = card.getBoundingClientRect();
+    touchOffsetX = touch.clientX - originalRect.left;
+    touchOffsetY = touch.clientY - originalRect.top;
+    touchDragging = false;
+    // Не даём браузеру запускать собственное перетаскивание карточки.
+    event.preventDefault();
+  }, { passive: false });
+
+  document.addEventListener("touchmove", event => {
+    if (touchIdentifier === null) return;
+    const touch = Array.from(event.changedTouches).find(item => item.identifier === touchIdentifier);
+    if (!touch) return;
+
+    const distance = Math.hypot(touch.clientX - touchStartX, touch.clientY - touchStartY);
+    if (!touchDragging && distance < 8) {
+      event.preventDefault();
+      return;
     }
-  });
 
-  card.addEventListener("pointerdown", event => {
-    if (event.pointerType === "mouse") return;
-    if (event.button !== 0) return;
+    if (!touchDragging) {
+      touchDragging = true;
+      card.classList.add("touch-dragging");
+      card.style.width = originalRect.width + "px";
+      card.style.left = (touch.clientX - touchOffsetX) + "px";
+      card.style.top = (touch.clientY - touchOffsetY) + "px";
+      card.style.margin = "0";
+    } else {
+      card.style.left = (touch.clientX - touchOffsetX) + "px";
+      card.style.top = (touch.clientY - touchOffsetY) + "px";
+    }
 
-    pointerStartX = event.clientX;
-    pointerStartY = event.clientY;
-    const rect = card.getBoundingClientRect();
-    offsetX = event.clientX - rect.left;
-    offsetY = event.clientY - rect.top;
+    const underFinger = document.elementFromPoint(touch.clientX, touch.clientY);
+    const zone = underFinger && underFinger.closest(".board, .pool");
+    document.querySelectorAll(".touch-drop-target").forEach(item => {
+      if (item !== zone) item.classList.remove("touch-drop-target");
+    });
+    if (zone) zone.classList.add("touch-drop-target");
+    event.preventDefault();
+  }, { passive: false });
 
-    const onMove = moveEvent => {
-      if (!draggingWithTouch) {
-        const distance = Math.hypot(
-          moveEvent.clientX - pointerStartX,
-          moveEvent.clientY - pointerStartY
-        );
-        if (distance < 8) return;
+  const finishTouchDrag = event => {
+    if (touchIdentifier === null) return;
+    const touch = Array.from(event.changedTouches || []).find(item => item.identifier === touchIdentifier);
+    if (!touch) return;
 
-        draggingWithTouch = true;
-        card.classList.add("touch-dragging");
-        card.style.width = rect.width + "px";
-        card.style.left = (moveEvent.clientX - offsetX) + "px";
-        card.style.top = (moveEvent.clientY - offsetY) + "px";
-        card.style.margin = "0";
-      } else {
-        card.style.left = (moveEvent.clientX - offsetX) + "px";
-        card.style.top = (moveEvent.clientY - offsetY) + "px";
-      }
+    let target = null;
+    if (touchDragging) {
+      const underFinger = document.elementFromPoint(touch.clientX, touch.clientY);
+      target = underFinger && underFinger.closest(".board, .pool");
+    }
 
-      if (draggingWithTouch) {
-        const underFinger = document.elementFromPoint(
-          moveEvent.clientX, moveEvent.clientY
-        );
-        const zone = underFinger && underFinger.closest(".board, .pool");
-        document.querySelectorAll(".touch-drop-target").forEach(item => {
-          if (item !== zone) item.classList.remove("touch-drop-target");
-        });
-        if (zone) zone.classList.add("touch-drop-target");
-        moveEvent.preventDefault();
-      }
-    };
+    const wasDragging = touchDragging;
+    touchIdentifier = null;
+    touchDragging = false;
+    clearTouchDragStyles();
 
-    const onUp = upEvent => {
-      document.removeEventListener("pointermove", onMove);
-      document.removeEventListener("pointerup", onUp);
-      document.removeEventListener("pointercancel", onUp);
+    if (wasDragging && target) {
+      let destination = "pool";
+      if (target.classList.contains("honor")) destination = "honor";
+      else if (target.classList.contains("shame")) destination = "shame";
+      moveUser(username, destination);
+    }
+  };
 
-      if (draggingWithTouch) {
-        const underFinger = document.elementFromPoint(
-          upEvent.clientX, upEvent.clientY
-        );
-        const zone = underFinger && underFinger.closest(".board, .pool");
-        document.querySelectorAll(".touch-drop-target").forEach(item => {
-          item.classList.remove("touch-drop-target");
-        });
-
-        card.classList.remove("touch-dragging");
-        card.style.removeProperty("position");
-        card.style.removeProperty("z-index");
-        card.style.removeProperty("pointer-events");
-        card.style.removeProperty("opacity");
-        card.style.removeProperty("transform");
-        card.style.removeProperty("box-shadow");
-        card.style.removeProperty("width");
-        card.style.removeProperty("left");
-        card.style.removeProperty("top");
-        card.style.removeProperty("margin");
-
-        if (zone) {
-          let target = "pool";
-          if (zone.classList.contains("honor")) target = "honor";
-          else if (zone.classList.contains("shame")) target = "shame";
-          moveUser(username, target);
-        }
-      }
-    };
-
-    document.addEventListener("pointermove", onMove, { passive: false });
-    document.addEventListener("pointerup", onUp);
-    document.addEventListener("pointercancel", onUp);
-  });
+  document.addEventListener("touchend", finishTouchDrag, { passive: true });
+  document.addEventListener("touchcancel", finishTouchDrag, { passive: true });
 
   return card;
 }
